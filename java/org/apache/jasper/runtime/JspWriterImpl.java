@@ -458,10 +458,9 @@ public class JspWriterImpl extends JspWriter {
      */
     @Override
     public void print(String s) throws IOException {
-        if (s == null) {
-            s = "null";
+        if (s!= null) {
+            write(s);
         }
-        write(s);
     }
 
     /**
