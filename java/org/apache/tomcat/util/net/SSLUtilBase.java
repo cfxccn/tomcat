@@ -202,7 +202,7 @@ public abstract class SSLUtilBase implements SSLUtil {
                 // Unfortunately, some key stores behave differently with null
                 // and "".
                 // JKS key stores treat null and "" interchangeably.
-                // PKCS12 key stores (Java 8 onwards) don't return the cert if
+                // PKCS12 key stores (Java 7 onwards) don't return the cert if
                 // null is used.
                 // Key stores that do not use passwords expect null
                 // Therefore:
@@ -257,10 +257,13 @@ public abstract class SSLUtilBase implements SSLUtil {
 
     @Override
     public void configureSessionContext(SSLSessionContext sslSessionContext) {
-        if (sslHostConfig.getSessionCacheSize() > 0) {
+        // <0 - don't set anything - use the implementation default
+        if (sslHostConfig.getSessionCacheSize() >= 0) {
             sslSessionContext.setSessionCacheSize(sslHostConfig.getSessionCacheSize());
         }
-        if (sslHostConfig.getSessionTimeout() > 0) {
+
+        // <0 - don't set anything - use the implementation default
+        if (sslHostConfig.getSessionTimeout() >= 0) {
             sslSessionContext.setSessionTimeout(sslHostConfig.getSessionTimeout());
         }
     }
@@ -485,7 +488,7 @@ public abstract class SSLUtilBase implements SSLUtil {
      * @return The parameters including the CRLs and TrustStore.
      * @throws Exception An error occurred
      */
-    private CertPathParameters getParameters(String crlf, KeyStore trustStore,
+    protected CertPathParameters getParameters(String crlf, KeyStore trustStore,
             boolean revocationEnabled) throws Exception {
 
         PKIXBuilderParameters xparams =
@@ -512,7 +515,7 @@ public abstract class SSLUtilBase implements SSLUtil {
      * @throws CRLException CRL error
      * @throws CertificateException Error processing certificate
      */
-    private Collection<? extends CRL> getCRLs(String crlf)
+    protected Collection<? extends CRL> getCRLs(String crlf)
         throws IOException, CRLException, CertificateException {
 
         Collection<? extends CRL> crls = null;

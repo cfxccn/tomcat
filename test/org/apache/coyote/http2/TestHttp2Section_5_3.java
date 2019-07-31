@@ -164,7 +164,7 @@ public class TestHttp2Section_5_3 extends Http2TestBase {
             // on ci.apache.org so allow a margin and use 20.
             if (data[1] > 20) {
                 // Larger than expected body size
-                Assert.fail("Larger than expected body: [" + output.getTrace() + "]");
+                Assert.fail("Larger than expected body: [" + output.getTrace() + "] " + data[1]);
             }
             output.clearTrace();
         }

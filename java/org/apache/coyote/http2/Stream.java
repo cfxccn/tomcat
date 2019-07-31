@@ -72,6 +72,8 @@ class Stream extends AbstractStream implements HeaderEmitter {
 
     private final Http2UpgradeHandler handler;
     private final StreamStateMachine state;
+    private final WindowAllocationManager allocationManager = new WindowAllocationManager(this);
+
     // State machine would be too much overhead
     private int headerState = HEADER_STATE_START;
     private StreamException headerException = null;
@@ -229,10 +231,12 @@ class Stream extends AbstractStream implements HeaderEmitter {
         if (inputBuffer != null) {
             inputBuffer.receiveReset();
         }
-        // Writes wait on Stream so we can notify directly
-        synchronized (this) {
-            this.notifyAll();
-        }
+        cancelAllocationRequests();
+    }
+
+
+    final void cancelAllocationRequests() {
+        allocationManager.notifyAny();
     }
 
 
@@ -250,17 +254,7 @@ class Stream extends AbstractStream implements HeaderEmitter {
         boolean notify = getWindowSize() < 1;
         super.incrementWindowSize(windowSizeIncrement);
         if (notify && getWindowSize() > 0) {
-            if (coyoteResponse.getWriteListener() == null) {
-                // Blocking, so use notify to release StreamOutputBuffer
-                notifyAll();
-            } else {
-                // Non-blocking so dispatch
-                coyoteResponse.action(ActionCode.DISPATCH_WRITE, null);
-                // Need to explicitly execute dispatches on the StreamProcessor
-                // as this thread is being processed by an UpgradeProcessor
-                // which won't see this dispatch
-                coyoteResponse.action(ActionCode.DISPATCH_EXECUTE, null);
-            }
+            allocationManager.notifyStream();
         }
     }
 
@@ -273,36 +267,23 @@ class Stream extends AbstractStream implements HeaderEmitter {
                 throw new CloseNowException(sm.getString("stream.notWritable",
                         getConnectionId(), getIdentifier()));
             }
-            try {
-                if (block) {
+            if (block) {
+                try {
                     long writeTimeout = handler.getProtocol().getStreamWriteTimeout();
-                    if (writeTimeout < 0) {
-                        wait();
-                    } else {
-                        wait(writeTimeout);
-                    }
+                    allocationManager.waitForStream(writeTimeout);
                     windowSize = getWindowSize();
                     if (windowSize == 0) {
-                        String msg = sm.getString("stream.writeTimeout");
-                        StreamException se = new StreamException(
-                                msg, Http2Error.ENHANCE_YOUR_CALM, getIdAsInt());
-                        // Prevent the application making further writes
-                        streamOutputBuffer.closed = true;
-                        // Prevent Tomcat's error handling trying to write
-                        coyoteResponse.setError();
-                        coyoteResponse.setErrorReported();
-                        // Trigger a reset once control returns to Tomcat
-                        streamOutputBuffer.reset = se;
-                        throw new CloseNowException(msg, se);
+                        doWriteTimeout();
                     }
-                } else {
-                    return 0;
+                } catch (InterruptedException e) {
+                    // Possible shutdown / rst or similar. Use an IOException to
+                    // signal to the client that further I/O isn't possible for this
+                    // Stream.
+                    throw new IOException(e);
                 }
-            } catch (InterruptedException e) {
-                // Possible shutdown / rst or similar. Use an IOException to
-                // signal to the client that further I/O isn't possible for this
-                // Stream.
-                throw new IOException(e);
+            } else {
+                allocationManager.waitForStreamNonBlocking();
+                return 0;
             }
         }
         int allocation;
@@ -313,6 +294,36 @@ class Stream extends AbstractStream implements HeaderEmitter {
         }
         decrementWindowSize(allocation);
         return allocation;
+    }
+
+
+    void doWriteTimeout() throws CloseNowException {
+        String msg = sm.getString("stream.writeTimeout");
+        StreamException se = new StreamException(
+                msg, Http2Error.ENHANCE_YOUR_CALM, getIdAsInt());
+        // Prevent the application making further writes
+        streamOutputBuffer.closed = true;
+        // Prevent Tomcat's error handling trying to write
+        coyoteResponse.setError();
+        coyoteResponse.setErrorReported();
+        // Trigger a reset once control returns to Tomcat
+        streamOutputBuffer.reset = se;
+        throw new CloseNowException(msg, se);
+    }
+
+
+    void waitForConnectionAllocation(long timeout) throws InterruptedException {
+        allocationManager.waitForConnection(timeout);
+    }
+
+
+    void waitForConnectionAllocationNonBlocking() {
+        allocationManager.waitForConnectionNonBlocking();
+    }
+
+
+    void notifyConnection() {
+        allocationManager.notifyConnection();
     }
 
 
@@ -347,6 +358,11 @@ class Stream extends AbstractStream implements HeaderEmitter {
             return;
         }
 
+        if (name.length() == 0) {
+            throw new HpackException(sm.getString("stream.header.empty",
+                    getConnectionId(), getIdentifier()));
+        }
+
         boolean pseudoHeader = name.charAt(0) == ':';
 
         if (pseudoHeader && headerState != HEADER_STATE_PSEUDO) {
@@ -361,7 +377,7 @@ class Stream extends AbstractStream implements HeaderEmitter {
             headerState = HEADER_STATE_REGULAR;
         }
 
-        switch(name) {
+        switch (name) {
         case ":method": {
             if (coyoteRequest.method().isNull()) {
                 coyoteRequest.method().setString(value);
@@ -871,7 +887,9 @@ class Stream extends AbstractStream implements HeaderEmitter {
                 flushed = true;
             }
 
-            if (!dataInBuffer) {
+            if (dataInBuffer) {
+                dataLeft = true;
+            } else {
                 if (writeBuffer.isEmpty()) {
                     // Both buffer and writeBuffer are empty.
                     if (flushed) {

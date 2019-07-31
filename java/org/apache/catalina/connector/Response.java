@@ -34,7 +34,6 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Vector;
 import java.util.function.Supplier;
 
 import javax.servlet.ServletOutputStream;
@@ -867,7 +866,6 @@ public class Response implements HttpServletResponse {
 
     @Override
     public Collection<String> getHeaderNames() {
-
         MimeHeaders headers = getCoyoteResponse().getMimeHeaders();
         int n = headers.size();
         List<String> result = new ArrayList<>(n);
@@ -881,12 +879,11 @@ public class Response implements HttpServletResponse {
 
     @Override
     public Collection<String> getHeaders(String name) {
-
         Enumeration<String> enumeration =
                 getCoyoteResponse().getMimeHeaders().values(name);
-        Vector<String> result = new Vector<>();
+        List<String> result = new ArrayList<>();
         while (enumeration.hasMoreElements()) {
-            result.addElement(enumeration.nextElement());
+            result.add(enumeration.nextElement());
         }
         return result;
     }
@@ -1396,8 +1393,9 @@ public class Response implements HttpServletResponse {
 
         char cc=name.charAt(0);
         if (cc=='C' || cc=='c') {
-            if (checkSpecialHeader(name, value))
+            if (checkSpecialHeader(name, value)) {
                 return;
+            }
         }
 
         getCoyoteResponse().setHeader(name, value);

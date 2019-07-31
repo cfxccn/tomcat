@@ -693,8 +693,10 @@ public abstract class ContainerBase extends LifecycleMBeanBase
 
     private void addChildInternal(Container child) {
 
-        if( log.isDebugEnabled() )
+        if (log.isDebugEnabled()) {
             log.debug("Add child " + child + " " + this);
+        }
+
         synchronized(children) {
             if (children.get(child.getName()) != null)
                 throw new IllegalArgumentException(
@@ -702,6 +704,8 @@ public abstract class ContainerBase extends LifecycleMBeanBase
             child.setParent(this);  // May throw IAE
             children.put(child.getName(), child);
         }
+
+        fireContainerEvent(ADD_CHILD_EVENT, child);
 
         // Start child
         // Don't do this inside sync block - start can be a slow process and
@@ -714,8 +718,6 @@ public abstract class ContainerBase extends LifecycleMBeanBase
             }
         } catch (LifecycleException e) {
             throw new IllegalStateException(sm.getString("containerBase.child.start"), e);
-        } finally {
-            fireContainerEvent(ADD_CHILD_EVENT, child);
         }
     }
 
@@ -806,15 +808,21 @@ public abstract class ContainerBase extends LifecycleMBeanBase
             log.error(sm.getString("containerBase.child.stop"), e);
         }
 
+        boolean destroy = false;
         try {
             // child.destroy() may have already been called which would have
             // triggered this call. If that is the case, no need to destroy the
             // child again.
             if (!LifecycleState.DESTROYING.equals(child.getState())) {
                 child.destroy();
+                destroy = true;
             }
         } catch (LifecycleException e) {
             log.error(sm.getString("containerBase.child.destroy"), e);
+        }
+
+        if (!destroy) {
+            fireContainerEvent(REMOVE_CHILD_EVENT, child);
         }
 
         synchronized(children) {
@@ -823,7 +831,6 @@ public abstract class ContainerBase extends LifecycleMBeanBase
             children.remove(child.getName());
         }
 
-        fireContainerEvent(REMOVE_CHILD_EVENT, child);
     }
 
 

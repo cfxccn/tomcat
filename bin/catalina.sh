@@ -228,7 +228,7 @@ fi
 
 # Bugzilla 37848: When no TTY is available, don't output to console
 have_tty=0
-if [ "`tty`" != "not a tty" ]; then
+if [ -t 0 ]; then
     have_tty=1
 fi
 
@@ -514,7 +514,7 @@ elif [ "$1" = "stop" ] ; then
     fi
   fi
 
-  eval "\"$_RUNJAVA\"" $JAVA_OPTS \
+  eval "\"$_RUNJAVA\"" $LOGGING_MANAGER $JAVA_OPTS \
     -D$ENDORSED_PROP="\"$JAVA_ENDORSED_DIRS\"" \
     -classpath "\"$CLASSPATH\"" \
     -Dcatalina.base="\"$CATALINA_BASE\"" \

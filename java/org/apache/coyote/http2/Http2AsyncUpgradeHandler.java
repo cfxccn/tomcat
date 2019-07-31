@@ -26,6 +26,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import javax.servlet.http.WebConnection;
+
 import org.apache.coyote.Adapter;
 import org.apache.coyote.ProtocolException;
 import org.apache.coyote.Request;
@@ -37,12 +39,16 @@ import org.apache.tomcat.util.net.SocketWrapperBase.BlockingMode;
 public class Http2AsyncUpgradeHandler extends Http2UpgradeHandler {
 
     private static final ByteBuffer[] BYTEBUFFER_ARRAY = new ByteBuffer[0];
+    // Ensures headers are generated and then written for one thread at a time.
+    // Because of the compression used, headers need to be written to the
+    // network in the same order they are generated.
+    private final Object headerWriteLock = new Object();
     private Throwable error = null;
     private IOException applicationIOE = null;
 
     public Http2AsyncUpgradeHandler(Http2Protocol protocol, Adapter adapter,
             Request coyoteRequest) {
-        super (protocol, adapter, coyoteRequest);
+        super(protocol, adapter, coyoteRequest);
     }
 
     private CompletionHandler<Long, Void> errorCompletion = new CompletionHandler<Long, Void>() {
@@ -78,10 +84,24 @@ public class Http2AsyncUpgradeHandler extends Http2UpgradeHandler {
         return new AsyncPingManager();
     }
 
+
     @Override
-    boolean hasAsyncIO() {
+    public boolean hasAsyncIO() {
         return true;
     }
+
+
+    @Override
+    protected void processConnection(WebConnection webConnection,
+            Stream stream) {
+        // The end of the processing will instead be an async callback
+    }
+
+    void processConnectionCallback(WebConnection webConnection,
+            Stream stream) {
+        super.processConnection(webConnection, stream);
+    }
+
 
     @Override
     protected void writeSettings() {
@@ -153,8 +173,7 @@ public class Http2AsyncUpgradeHandler extends Http2UpgradeHandler {
     @Override
     void writeHeaders(Stream stream, int pushedStreamId, MimeHeaders mimeHeaders,
             boolean endOfStream, int payloadSize) throws IOException {
-        // This ensures the Stream processing thread has control of the socket.
-        synchronized (socketWrapper) {
+        synchronized (headerWriteLock) {
             AsyncHeaderFrameBuffers headerFrameBuffers = (AsyncHeaderFrameBuffers)
                     doWriteHeaders(stream, pushedStreamId, mimeHeaders, endOfStream, payloadSize);
             if (headerFrameBuffers != null) {

@@ -350,8 +350,10 @@ public class Http11Processor extends AbstractProcessor {
             Enumeration<String> connectionValues = request.getMimeHeaders().values("Connection");
             boolean foundUpgrade = false;
             while (connectionValues.hasMoreElements() && !foundUpgrade) {
-                foundUpgrade = connectionValues.nextElement().toLowerCase(
-                        Locale.ENGLISH).contains("upgrade");
+                String connectionValue = connectionValues.nextElement();
+                if (connectionValue != null) {
+                    foundUpgrade = connectionValue.toLowerCase(Locale.ENGLISH).contains("upgrade");
+                }
             }
 
             if (foundUpgrade) {
@@ -594,7 +596,7 @@ public class Http11Processor extends AbstractProcessor {
 
         // Check connection header
         MessageBytes connectionValueMB = headers.getValue(Constants.CONNECTION);
-        if (connectionValueMB != null) {
+        if (connectionValueMB != null && !connectionValueMB.isNull()) {
             ByteChunk connectionValueBC = connectionValueMB.getByteChunk();
             if (findBytes(connectionValueBC, Constants.CLOSE_BYTES) != -1) {
                 keepAlive = false;
@@ -606,7 +608,7 @@ public class Http11Processor extends AbstractProcessor {
 
         if (http11) {
             MessageBytes expectMB = headers.getValue("expect");
-            if (expectMB != null) {
+            if (expectMB != null && !expectMB.isNull()) {
                 if (expectMB.indexOfIgnoreCase("100-continue", 0) != -1) {
                     inputBuffer.setSwallowInput(false);
                     request.setExpectation(true);
@@ -623,7 +625,7 @@ public class Http11Processor extends AbstractProcessor {
             MessageBytes userAgentValueMB = headers.getValue("user-agent");
             // Check in the restricted list, and adjust the http11
             // and keepAlive flags accordingly
-            if(userAgentValueMB != null) {
+            if(userAgentValueMB != null && !userAgentValueMB.isNull()) {
                 String userAgentValue = userAgentValueMB.toString();
                 if (restrictedUserAgents.matcher(userAgentValue).matches()) {
                     http11 = false;
@@ -639,20 +641,10 @@ public class Http11Processor extends AbstractProcessor {
             hostValueMB = headers.getUniqueValue("host");
         } catch (IllegalArgumentException iae) {
             // Multiple Host headers are not permitted
-            // 400 - Bad request
-            response.setStatus(400);
-            setErrorState(ErrorState.CLOSE_CLEAN, null);
-            if (log.isDebugEnabled()) {
-                log.debug(sm.getString("http11processor.request.multipleHosts"));
-            }
+            badRequest("http11processor.request.multipleHosts");
         }
         if (http11 && hostValueMB == null) {
-            // 400 - Bad request
-            response.setStatus(400);
-            setErrorState(ErrorState.CLOSE_CLEAN, null);
-            if (log.isDebugEnabled()) {
-                log.debug(sm.getString("http11processor.request.noHostHeader"));
-            }
+            badRequest("http11processor.request.noHostHeader");
         }
 
         // Check for an absolute-URI less the query string which has already
@@ -700,11 +692,7 @@ public class Http11Processor extends AbstractProcessor {
                             // Strictly there needs to be a check for valid %nn
                             // encoding here but skip it since it will never be
                             // decoded because the userinfo is ignored
-                            response.setStatus(400);
-                            setErrorState(ErrorState.CLOSE_CLEAN, null);
-                            if (log.isDebugEnabled()) {
-                                log.debug(sm.getString("http11processor.request.invalidUserInfo"));
-                            }
+                            badRequest("http11processor.request.invalidUserInfo");
                             break;
                         }
                     }
@@ -730,26 +718,26 @@ public class Http11Processor extends AbstractProcessor {
                                 // The requirements of RFC 7230 are being
                                 // applied. If the host header and the request
                                 // line do not agree, trigger a 400 response.
-                                response.setStatus(400);
-                                setErrorState(ErrorState.CLOSE_CLEAN, null);
-                                if (log.isDebugEnabled()) {
-                                    log.debug(sm.getString("http11processor.request.inconsistentHosts"));
-                                }
+                                badRequest("http11processor.request.inconsistentHosts");
                             }
                         }
                     }
                 } else {
                     // Not HTTP/1.1 - no Host header so generate one since
                     // Tomcat internals assume it is set
-                    hostValueMB = headers.setValue("host");
-                    hostValueMB.setBytes(uriB, uriBCStart + pos, slashPos - pos);
+                    try {
+                        hostValueMB = headers.setValue("host");
+                        hostValueMB.setBytes(uriB, uriBCStart + pos, slashPos - pos);
+                    } catch (IllegalStateException e) {
+                        // Edge case
+                        // If the request has too many headers it won't be
+                        // possible to create the host header. Ignore this as
+                        // processing won't reach the point where the Tomcat
+                        // internals expect there to be a host header.
+                    }
                 }
             } else {
-                response.setStatus(400);
-                setErrorState(ErrorState.CLOSE_CLEAN, null);
-                if (log.isDebugEnabled()) {
-                    log.debug(sm.getString("http11processor.request.invalidScheme"));
-                }
+                badRequest("http11processor.request.invalidScheme");
             }
         }
 
@@ -757,11 +745,7 @@ public class Http11Processor extends AbstractProcessor {
         // the point of decoding.
         for (int i = uriBC.getStart(); i < uriBC.getEnd(); i++) {
             if (!httpParser.isAbsolutePathRelaxed(uriB[i])) {
-                response.setStatus(400);
-                setErrorState(ErrorState.CLOSE_CLEAN, null);
-                if (log.isDebugEnabled()) {
-                    log.debug(sm.getString("http11processor.request.invalidUri"));
-                }
+                badRequest("http11processor.request.invalidUri");
                 break;
             }
         }
@@ -772,7 +756,7 @@ public class Http11Processor extends AbstractProcessor {
         // Parse transfer-encoding header
         if (http11) {
             MessageBytes transferEncodingValueMB = headers.getValue("transfer-encoding");
-            if (transferEncodingValueMB != null) {
+            if (transferEncodingValueMB != null && !transferEncodingValueMB.isNull()) {
                 String transferEncodingValue = transferEncodingValueMB.toString();
                 // Parse the comma separated list. "identity" codings are ignored
                 int startPos = 0;
@@ -790,7 +774,14 @@ public class Http11Processor extends AbstractProcessor {
         }
 
         // Parse content-length header
-        long contentLength = request.getContentLengthLong();
+        long contentLength = -1;
+        try {
+            contentLength = request.getContentLengthLong();
+        } catch (NumberFormatException e) {
+            badRequest("http11processor.request.nonNumericContentLength");
+        } catch (IllegalArgumentException e) {
+            badRequest("http11processor.request.multipleContentLength");
+        }
         if (contentLength >= 0) {
             if (contentDelimitation) {
                 // contentDelimitation being true at this point indicates that
@@ -819,6 +810,15 @@ public class Http11Processor extends AbstractProcessor {
 
         if (!getErrorState().isIoAllowed()) {
             getAdapter().log(request, response, 0);
+        }
+    }
+
+
+    private void badRequest(String errorKey) {
+        response.setStatus(400);
+        setErrorState(ErrorState.CLOSE_CLEAN, null);
+        if (log.isDebugEnabled()) {
+            log.debug(sm.getString(errorKey));
         }
     }
 

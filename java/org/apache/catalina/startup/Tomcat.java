@@ -36,6 +36,7 @@ import java.util.Stack;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.logging.Level;
+import java.util.logging.LogManager;
 import java.util.logging.Logger;
 
 import javax.servlet.Servlet;
@@ -67,13 +68,16 @@ import org.apache.catalina.core.StandardService;
 import org.apache.catalina.core.StandardWrapper;
 import org.apache.catalina.realm.GenericPrincipal;
 import org.apache.catalina.realm.RealmBase;
+import org.apache.catalina.security.SecurityClassLoad;
 import org.apache.catalina.util.ContextName;
 import org.apache.catalina.util.IOTools;
 import org.apache.tomcat.util.ExceptionUtils;
 import org.apache.tomcat.util.buf.UriUtil;
+import org.apache.tomcat.util.compat.JreCompat;
 import org.apache.tomcat.util.descriptor.web.LoginConfig;
 import org.apache.tomcat.util.file.ConfigFileLoader;
 import org.apache.tomcat.util.file.ConfigurationSource;
+import org.apache.tomcat.util.modeler.Registry;
 import org.apache.tomcat.util.res.StringManager;
 
 // TODO: lazy init for the temp dir - only when a JSP is compiled or
@@ -1384,12 +1388,30 @@ public class Tomcat {
         return result;
     }
 
+    static {
+        // Graal native images don't load any configuration except the VM default
+        if (JreCompat.isGraalAvailable()) {
+            try (InputStream is = new FileInputStream(new File(System.getProperty("java.util.logging.config.file", "conf/logging.properties")))) {
+                LogManager.getLogManager().readConfiguration(is);
+            } catch (SecurityException | IOException e) {
+                // Ignore, the VM default will be used
+            }
+        }
+    }
+
     /**
      * Main executable method for use with a Maven packager.
      * @param args the command line arguments
      * @throws Exception if an error occurs
      */
     public static void main(String[] args) throws Exception {
+        // Process some command line parameters
+        for (int i = 0; i < args.length; i++) {
+            if (args[i].equals("--no-jmx")) {
+                Registry.disableRegistry();
+            }
+        }
+        SecurityClassLoad.securityClassLoad(Thread.currentThread().getContextClassLoader());
         org.apache.catalina.startup.Tomcat tomcat = new org.apache.catalina.startup.Tomcat();
         // Create a Catalina instance and let it parse the configuration files
         // It will also set a shutdown hook to stop the Server when needed
@@ -1437,6 +1459,8 @@ public class Tomcat {
                 path = args[i];
             } else if (args[i].equals("--await")) {
                 await = true;
+            } else if (args[i].equals("--no-jmx")) {
+                // This was already processed before
             } else {
                 throw new IllegalArgumentException(sm.getString("tomcat.invalidCommandLine", args[i]));
             }

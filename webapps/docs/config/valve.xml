@@ -1003,6 +1003,12 @@
         default of <code>X-Forwarded-Proto</code> is used.</p>
       </attribute>
 
+      <attribute name="hostHeader" required="false">
+        <p>Name of the HTTP Header read by this valve that holds the host
+        used by the client to connect to the proxy. If not specified, the
+        default of <code>null</code> is used.</p>
+      </attribute>
+
       <attribute name="portHeader" required="false">
         <p>Name of the HTTP Header read by this valve that holds the port
         used by the client to connect to the proxy. If not specified, the
@@ -1027,6 +1033,13 @@
          when the <strong>protocolHeader</strong> indicates <code>https</code>
          protocol and no <strong>portHeader</strong> is present. If not
          specified, the default of <code>443</code> is used.</p>
+      </attribute>
+
+      <attribute name="changeLocalHost" required="false">
+        <p>If <code>true</code>, the value returned by
+        <code>ServletRequest.getLocalHost()</code> and
+        <code>ServletRequest.getServerHost()</code> is modified by the this
+        valve. If not specified, the default of <code>false</code> is used.</p>
       </attribute>
 
       <attribute name="changeLocalPort" required="false">
@@ -2080,6 +2093,40 @@
       <attribute name="interruptible" required="false">
         <p>Flag to determine if a thread may be interrupted until a permit is
         available. The default value is <strong>false</strong>.</p>
+      </attribute>
+
+    </attributes>
+
+  </subsection>
+
+</section>
+
+<section name="Health Check Valve">
+
+  <subsection name="Introduction">
+
+    <p>The <strong>Health Check Valve</strong> responds to
+    cloud orchestrators health checks. Note that it checks
+    that a context is mapped (so that an application is deployed),
+    for example if you don't have a ROOT context but demo-1.0
+    you have to check for <code>/demo-1.0/health</code></p>
+  </subsection>
+
+  <subsection name="Attributes">
+
+    <p>The <strong>Health Check Valve</strong> supports the
+    following configuration attributes:</p>
+
+    <attributes>
+
+      <attribute name="className" required="true">
+        <p>Java class name of the implementation to use.  This MUST be set to
+        <strong>org.apache.catalina.valves.HealthCheckValve</strong>.</p>
+      </attribute>
+
+      <attribute name="path" required="false">
+        <p>Path by the cloud orchestrators health check logic.
+        The default value is <strong>/health</strong>.</p>
       </attribute>
 
     </attributes>

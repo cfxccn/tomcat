@@ -20,6 +20,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
+import javax.servlet.http.WebConnection;
+
 import org.apache.coyote.ProtocolException;
 import org.apache.coyote.http2.HpackDecoder.HeaderEmitter;
 import org.apache.juli.logging.Log;
@@ -580,11 +582,13 @@ class Http2Parser {
         // going to be thrown.
         hpackDecoder.getHeaderEmitter().validateHeaders();
 
-        output.headersEnd(streamId);
+        synchronized (output) {
+            output.headersEnd(streamId);
 
-        if (headersEndStream) {
-            output.receivedEndOfStream(streamId);
-            headersEndStream = false;
+            if (headersEndStream) {
+                output.receivedEndOfStream(streamId);
+                headersEndStream = false;
+            }
         }
 
         // Reset size for new request if the buffer was previously expanded
@@ -644,8 +648,10 @@ class Http2Parser {
 
     /**
      * Read and validate the connection preface from input using blocking IO.
+     * @param webConnection The connection
+     * @param stream The current stream
      */
-    void readConnectionPreface() throws Http2Exception {
+    void readConnectionPreface(WebConnection webConnection, Stream stream) throws Http2Exception {
         byte[] data = new byte[CLIENT_PREFACE_START.length];
         try {
             input.fill(true, data);
